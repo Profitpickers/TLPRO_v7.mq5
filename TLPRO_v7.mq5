@@ -1,5 +1,6 @@
 //+------------------------------------------------------------------+
-//| TLPRO_v7.mq5
+//| TLPRO_7.mq5                                                      |
+//| ex TrendlineStatsCollector_PRO_01_v1.07.mq5                      |
 //| Copyright 2025, ProfitPickers - vitoiacobellis.it                |
 //| https://www.vitoiacobellis.it                                    |
 //+------------------------------------------------------------------+
@@ -9,29 +10,77 @@
 #property strict
 #property description "EA di analisi trendline macro-micro, delta e dashboard statistica."
 
-#include <Trade/Trade.mqh>
-// #include <stdlib.mqh>
-
-
-#include "../Include/CTradeDecisionManager.mqh"
-#include "../Include/CTradeExecutor.mqh"
-#include "../Include/CVolumeManager.mqh"
-#include "../Include/AuditCheck.mqh"
-#include "../Include/CTrendlineAnalyzer.mqh"
 
 
 #include <ChartObjects/ChartObjectsLines.mqh>
-#include "../Include/CTrackCounterDrawer.mqh"
+
+#include <Trade/Trade.mqh>
 #include "../Include/CStrategyParamsManager.mqh"
-#include "../Include/CAuditCheck.mqh"
-#include "../Include/AuditParamsCheck.mqh"
+#include "../Include/CTradeExecutor.mqh"
+#include "../Include/CTradeDecisionManager.mqh"
+#include "../Include/CVolumeManager.mqh"
+#include "../Include/CTrackCounterDashboard.mqh"
+#include "../Include/CTrendlineAnalyzer.mqh"
+#include "../Include/MovingAverages.mqh"
 #include "../Include/ParamConverters.mqh"
+#include "../Include/AuditParamsCheck.mqh"
+#include "../Include/AuditCheck.mqh"
+
+#include "../Include/CTrackCounterDrawer.mqh"
+#include "../Include/CAuditCheck.mqh"
+
+
+
+
+// === [GLOB] Variabili di tempo e intervalli ===
+datetime last_extra_update = 0;
+int extra_interval_sec = 300;
+
+// === [GRAFICO] Etichette per trendline (LEFT / RIGHT) ===
+string labels_left[6]  = { "MICRO", "MACRO", "EXTRA", "UPTrend", "DOWNtrend", "SUPPORT" };
+string labels_right[6] = { "Delta Mac-Mic", "Delta Mac-Ext", "Delta Ext-Mic", "DIST", "MAXpick", "MINpick" };
+
+// === [TREND INDEX] Valori indicizzati per logica strategica ===
+int left_vals[6], right_vals[6];
+double indexMicro, indexMacro, indexExtra;
+
+// === [OGGETTI CORE] Trade, Parametri, Esecuzione ===
+CTrade trade;
+
+
+StrategyParams paramsS1;
+StrategyParams paramsS2;
+StrategyParams paramsS3;
+StrategyParams paramsS4;
+
+CVolumeManager        trade_volume;
+CVolumeManager volumeManager;
+
+CStrategyParamsManager strategyParams;
+CStrategyParamsManager paramsManager;
+//CTrendlineAnalyzer trendAnalyzer;
+
+// === [STRATEGIE DECISIONALI] ===
+CTradeDecisionManager decision;
+CTradeExecutor executor;
+
+
+// === [TRACKING VISIVO] ===
+CTrackCounterDrawer trackDrawer;
+CTrackCounterDashboard trackCounter;
+
+// === [AUDIT] ===
+AuditCheck audit;
+
+
+
+
 
 //==============================//
 // ORIGINE DATI E TRENDLINE     //
 //==============================//
 input group "bypass_filter per abilitare audit anche in Strategy Tester"
-input bool bypass_filter = true;  // 🔓 Esegui Audit anche nel Strategy Tester
+input bool bypass_main_filter = false;  // 🔓 Esegui Audit anche nel Strategy Tester
 
 
 //==============================//
@@ -100,18 +149,21 @@ input double delta_min_retracement = 0.3;  // Differenza angolare minima ° macr
 // Distanza massima tra prezzo e TL extra per ritracciamento valido (Strategia 3)
 input double max_dist_retracement = 200.0; // Massima distanza in punti tra prezzo e TL extra x evento significativo
 
-
+input group "🎯������ "
 input double s1_equity_tp_buy = 10.0;
 input double s2_equity_tp_buy = 10.0;
 input double s3_equity_tp_buy = 10.0;
-
+input group "🎯������ "
 input int s1_max_positions_buy = 1;
 input int s2_max_positions_buy = 1;
 input int s3_max_positions_buy = 1;
-
+input group "🎯������ "
 input int s1_min_spacing_buy = 10;
 input int s2_min_spacing_buy = 10;
 input int s3_min_spacing_buy = 10;
+
+input group "🎯������ "
+
 
 
 
@@ -120,7 +172,7 @@ input int s3_min_spacing_buy = 10;
 // 🎯 STRATEGIA 1
 //==============================//
 input group "🎯 Strategia 1 - Parametri Generali 🎯 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
-input bool     enable_strategy_1           = true;        // Attiva o disattiva la Strategia 1 (logica su soglie positive)
+input bool     enable_s1                   = true;        // Attiva o disattiva la Strategia 1 (logica su soglie positive)
 input bool     invert_strategy_1           = false;       // Inverte la logica BUY/SELL per test contrarian
 input int      magic_strategy_1            = 110001;      // Numero magico univoco per la Strategia 1
 input int      sl_pips_s1                  = 40;          // Stop Loss in pips per ogni ordine S1
@@ -131,6 +183,16 @@ input int      max_positions_s1            = 3;           // Numero massimo di p
 input double   min_spacing_s1              = 5.0;         // Spaziatura minima tra ordini S1
 input double   trail_pips_s1               = 10.0;        // Trailing Stop in pips per ordini di S1
 
+input double tp_s1 = 40;
+input double sl_s1 = 20;
+input int magic_s1 = 70011;
+input bool invert_strategy_s1 = false;
+input int trailing_s1 = 10;
+input int bars_s1 = 60;
+input bool use_buy_s1 = true;
+input bool use_sell_s1 = false;
+
+
 //------------------------------//
 // 🟢 Strategia 1 - BUY Trigger
 //------------------------------//
@@ -139,6 +201,7 @@ input bool     s1_use_buy                  = true;        // Abilita il lato BUY
 input double   angle_thresh_extra_s1_buy   = 30.0;        // Pendenza minima positiva della trendline EXTRA
 input double   angle_thresh_macro_s1_buy   = 25.0;        // Pendenza minima positiva della trendline MACRO
 input double   angle_thresh_micro_s1_buy   = 20.0;        // Pendenza minima positiva della trendline MICRO
+input double   velocity_min_micro_s1_buy   = 0.5;
 input double   price_dist_extra_s1_buy     = 100.0;       // Distanza minima tra prezzo e trendline EXTRA (BUY)
 input double   delta_tl_s1_buy             = 10.0;        // Differenza angolare tra le 3 TL per validazione BUY
 input double   index_s1_buy                = 0.8;         // Valore minimo dell’indice combinato per attivare BUY 
@@ -151,17 +214,17 @@ input bool     s1_use_sell                 = true;        // Abilita il lato SEL
 input double   angle_thresh_extra_s1_sell  = -30.0;       // Pendenza minima negativa della trendline EXTRA
 input double   angle_thresh_macro_s1_sell  = -25.0;       // Pendenza minima negativa della trendline MACRO
 input double   angle_thresh_micro_s1_sell  = -20.0;       // Pendenza minima negativa della trendline MICRO
+input double   velocity_min_micro_s1       = 0.8;
 input double   price_dist_extra_s1_sell    = 100.0;       // Distanza minima tra prezzo e trendline EXTRA (SELL)
 input double   delta_tl_s1_sell            = 10.0;        // Differenza angolare tra le 3 TL per validazione SELL
 input double   index_s1_sell               = 0.8;         // Valore minimo dell’indice combinato per attivare SELL
-
 
 
 //==============================//
 // 🎯 STRATEGIA 2
 //==============================//
 input group "🎯 Strategia 2 - Parametri Generali 🎯 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2"
-input bool   enable_strategy_2           = true;        // Attiva o disattiva la Strategia 2 (logica su soglie negative)
+input bool   enable_s2           = true;        // Attiva o disattiva la Strategia 2 (logica su soglie negative)
 input bool   invert_strategy_2           = false;       // Inverte la logica BUY/SELL per test contrarian
 input int    magic_strategy_2            = 110002;      // Numero magico univoco per la Strategia 2
 input int    sl_pips_s2                  = 40;          // Stop Loss in pips per ogni ordine S2
@@ -172,6 +235,19 @@ input int    max_positions_s2            = 3;           // Numero massimo di pos
 input double min_spacing_s2              = 5.0;         // Spaziatura minima tra ordini S2
 input double trail_pips_s2               = 10.0;        // Trailing Stop in pips per ordini di S2
 
+
+
+input double tp_s2 = 40;
+input double sl_s2 = 20;
+input int magic_s2 = 70011;
+input bool invert_strategy_s2 = false;
+input int trailing_s2 = 10;
+input int bars_s2 = 60;
+input bool use_buy_s2 = true;
+input bool use_sell_s2 = false;
+
+
+
 //------------------------------//
 // 🟢 Strategia 2 - BUY Trigger
 //------------------------------//
@@ -180,6 +256,7 @@ input bool   s2_use_buy                  = true;        // Abilita il lato BUY p
 input double angle_thresh_extra_s2_buy  = 30.0;         // Pendenza minima positiva della trendline EXTRA
 input double angle_thresh_macro_s2_buy  = 25.0;         // Pendenza minima positiva della trendline MACRO
 input double angle_thresh_micro_s2_buy  = 20.0;         // Pendenza minima positiva della trendline MICRO
+input double velocity_min_micro_s2_buy = 0.5;
 input double price_dist_extra_s2_buy    = 100.0;        // Distanza minima tra prezzo e trendline EXTRA (BUY)
 input double delta_tl_s2_buy            = 10.0;         // Differenza angolare tra le 3 TL per validazione BUY
 input double index_s2_buy               = 0.8;          // Valore minimo dell’indice combinato per attivare BUY 
@@ -192,6 +269,7 @@ input bool   s2_use_sell                 = true;        // Abilita il lato SELL 
 input double angle_thresh_extra_s2_sell = -30.0;        // Pendenza minima negativa della trendline EXTRA
 input double angle_thresh_macro_s2_sell = -25.0;        // Pendenza minima negativa della trendline MACRO
 input double angle_thresh_micro_s2_sell = -20.0;        // Pendenza minima negativa della trendline MICRO
+input double velocity_min_micro_s2       = 0.8;
 input double price_dist_extra_s2_sell   = 100.0;        // Distanza minima tra prezzo e trendline EXTRA (SELL)
 input double delta_tl_s2_sell           = 10.0;         // Differenza angolare tra le 3 TL per validazione SELL
 input double index_s2_sell              = 0.8;          // Valore minimo dell’indice combinato per attivare SELL
@@ -203,7 +281,7 @@ input double index_s2_sell              = 0.8;          // Valore minimo dell’
 // 🎯 STRATEGIA 3
 //==============================//
 input group "🎯 Strategia 3 - Parametri Generali 🎯 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3"
-input bool   enable_strategy_3           = true;        // Attiva o disattiva la Strategia 3 (blocco TP se eccesso positivo)
+input bool   enable_s3           = true;        // Attiva o disattiva la Strategia 3 (blocco TP se eccesso positivo)
 input bool   invert_strategy_3           = false;       // Inverte la logica BUY/SELL per test contrarian
 input int    magic_strategy_3            = 110003;      // Numero magico univoco per la Strategia 3
 input int    sl_pips_s3                  = 40;          // Stop Loss in pips per ogni ordine S3
@@ -214,6 +292,21 @@ input int    max_positions_s3            = 3;           // Numero massimo di pos
 input double min_spacing_s3              = 5.0;         // Spaziatura minima tra ordini S3
 input double trail_pips_s3               = 10.0;        // Trailing Stop in pips per ordini di S3
 
+input double tp_s3 = 40;
+input double sl_s3 = 20;
+input int magic_s3 = 70011;
+input bool invert_strategy_s3 = false;
+input int trailing_s3 = 10;
+input int bars_s3 = 60;
+input bool use_buy_s3 = true;
+input bool use_sell_s3 = false;
+
+
+
+
+
+
+
 //------------------------------//
 // 🟢 Strategia 3 - BUY Trigger
 //------------------------------//
@@ -222,6 +315,7 @@ input bool   s3_use_buy                  = true;        // Abilita il lato BUY p
 input double angle_thresh_extra_s3_buy  = 30.0;         // Pendenza minima positiva della trendline EXTRA
 input double angle_thresh_macro_s3_buy  = 25.0;         // Pendenza minima positiva della trendline MACRO
 input double angle_thresh_micro_s3_buy  = 20.0;         // Pendenza minima positiva della trendline MICRO
+input double velocity_min_micro_s3_buy = 0.5;
 input double price_dist_extra_s3_buy    = 100.0;        // Distanza minima tra prezzo e trendline EXTRA (BUY)
 input double delta_tl_s3_buy            = 10.0;         // Differenza angolare tra le 3 TL per validazione BUY
 input double index_s3_buy               = 0.8;          // Valore minimo dell’indice combinato per attivare BUY 
@@ -234,6 +328,7 @@ input bool   s3_use_sell                 = true;        // Abilita il lato SELL 
 input double angle_thresh_extra_s3_sell = -30.0;        // Pendenza minima negativa della trendline EXTRA
 input double angle_thresh_macro_s3_sell = -25.0;        // Pendenza minima negativa della trendline MACRO
 input double angle_thresh_micro_s3_sell = -20.0;        // Pendenza minima negativa della trendline MICRO
+input double   velocity_min_micro_s3       = 0.8;
 input double price_dist_extra_s3_sell   = 100.0;        // Distanza minima tra prezzo e trendline EXTRA (SELL)
 input double delta_tl_s3_sell           = 10.0;         // Differenza angolare tra le 3 TL per validazione SELL
 input double index_s3_sell              = 0.8;          // Valore minimo dell’indice combinato per attivare SELL
@@ -243,7 +338,7 @@ input double index_s3_sell              = 0.8;          // Valore minimo dell’
 //------------------------------//
 
 input group "🧠 Strategia 4 - Parametri Generali 🧠 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4"
-input bool     enable_strategy_4           = true;        // Attiva o disattiva la Strategia 4 (logica su soglie negative - blocco TP)
+input bool     enable_s4           = true;        // Attiva o disattiva la Strategia 4 (logica su soglie negative - blocco TP)
 input bool     invert_strategy_4           = false;       // Inverte la logica BUY/SELL per test contrarian
 input int      magic_strategy_4            = 110004;      // Numero magico univoco per la Strategia 4
 input int      sl_pips_s4                  = 40;          // Stop Loss in pips per ogni ordine S4
@@ -258,6 +353,18 @@ input double   angle_thresh_macro_s4       = 25.0;        // Pendenza soglia MAC
 input double   angle_thresh_micro_s4       = 20.0;        // Pendenza soglia MICRO (media)
 input double   min_dist_extra_s4           = 100.0;       // Distanza min tra prezzo e TL EXTRA
 
+input double tp_s4 = 40;
+input double sl_s4 = 20;
+input int magic_s4 = 70011;
+input bool invert_strategy_s4 = false;
+input int trailing_s4 = 10;
+input int bars_s4 = 60;
+input bool use_buy_s4 = true;
+input bool use_sell_s4 = false;
+
+
+
+
 
 //------------------------------//
 // 🟢 Strategia 4 - BUY Trigger
@@ -267,6 +374,7 @@ input bool     s4_use_buy                  = true;        // Abilita il lato BUY
 input double   angle_thresh_extra_s4_buy   = 30.0;        // Pendenza minima positiva della trendline EXTRA
 input double   angle_thresh_macro_s4_buy   = 25.0;        // Pendenza minima positiva della trendline MACRO
 input double   angle_thresh_micro_s4_buy   = 20.0;        // Pendenza minima positiva della trendline MICRO
+input double velocity_min_micro_s4_buy = 0.5;
 input double   price_dist_extra_s4_buy     = 100.0;       // Distanza minima tra prezzo e trendline EXTRA (BUY)
 input double   delta_tl_s4_buy             = 10.0;        // Differenza angolare tra le 3 TL per validazione BUY
 input double   index_s4_buy                = 0.8;         // Valore minimo dell’indice combinato per attivare BUY (blocco TP)
@@ -283,6 +391,7 @@ input bool     s4_use_sell                 = true;        // Abilita il lato SEL
 input double   angle_thresh_extra_s4_sell  = -30.0;       // Pendenza minima negativa della trendline EXTRA
 input double   angle_thresh_macro_s4_sell  = -25.0;       // Pendenza minima negativa della trendline MACRO
 input double   angle_thresh_micro_s4_sell  = -20.0;       // Pendenza minima negativa della trendline MICRO
+input double   velocity_min_micro_s4       = 0.8;
 input double   price_dist_extra_s4_sell    = 100.0;       // Distanza minima tra prezzo e trendline EXTRA (SELL)
 input double   delta_tl_s4_sell            = 10.0;        // Differenza angolare tra le 3 TL per validazione SELL
 input double   index_s4_sell               = 0.8;         // Valore minimo dell’indice combinato per attivare SELL (blocco TP)
@@ -326,161 +435,26 @@ input string inp_label = "TrendlinePRO";       // Prefisso comune per etichette 
 
 
 
-
-
-// === [GLOB] Variabili di tempo e intervalli ===
-datetime last_extra_update = 0;
-int extra_interval_sec = 300;
-
-// === [GRAFICO] Etichette per trendline (LEFT / RIGHT) ===
-string labels_left[6]  = { "MICRO", "MACRO", "EXTRA", "UPTrend", "DOWNtrend", "SUPPORT" };
-string labels_right[6] = { "Delta Mac-Mic", "Delta Mac-Ext", "Delta Ext-Mic", "DIST", "MAXpick", "MINpick" };
-
-// === [TREND INDEX] Valori indicizzati per logica strategica ===
-int left_vals[6], right_vals[6];
-double indexMicro, indexMacro, indexExtra;
-
-// === [CONFIG] Struttura per parametri strategici (SL / TP / Magic / Label) ===
-struct StrategyConfig {
-   int sl_pips;
-   int tp_pips;
-   int magic;
-   string label_prefix;
-};
-
-// === [OGGETTI CORE] Trade, Parametri, Esecuzione ===
-CTrade trade;
-
-
-CStrategyParamsManager strategyParams;
-
-S1Params s1;
-S2Params s2;
-S3Params s3;
-S4Params s4;
-
-
-CTradeExecutor executor;
-
-// === [VOLUME MANAGER] Calcolo lotti e gestione rischio ===
-CVolumeManager trade_volume;
-CVolumeManager volumeManager;
-
-// === [STRATEGIE CONFIGURATE] Configurazioni separate S1, S2, S3 ===
-StrategyConfig config_s1, config_s2, config_s3;
-
-// === [STRATEGIE DECISIONALI] Controllo segnali per ogni strategia ===
-CTradeDecisionManager strategy2_decision;
-CTradeDecisionManager decision;
-
-// === [TRACKING VISIVO] Dashboard grafica delle trendline ===
-CTrackCounterDrawer trackDrawer;
-
-// === [AUDIT] Verifica coerenza parametri e soglie ===
-AuditCheck audit;
-
-
-
-
-
-// Dichiara le variabili 
-
-S1Params s1_params;
-S2Params s2_params;
-S3Params s3_params;
-S4Params s4_params;
-
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("🔄 Inizializzazione Expert Advisor...");
-
-   // === [G] INIZIALIZZAZIONE PARAMETRI STRATEGICI ===
-   strategyParams.Init(
-      tp_pips_s1, tp_pips_s2, tp_pips_s3, tp_pips_s4,
-      sl_pips_s1, sl_pips_s2, sl_pips_s3, sl_pips_s4,
-      magic_strategy_1, magic_strategy_2, magic_strategy_3, magic_strategy_4,
-      enable_strategy_1, enable_strategy_2, enable_strategy_3, enable_strategy_4,
-      invert_strategy_1, invert_strategy_2, invert_strategy_3, invert_strategy_4,
-      s1_use_buy, s2_use_buy, s3_use_buy, s4_use_buy,
-      s1_use_sell, s2_use_sell, s3_use_sell, s4_use_sell,
-      equity_tp_s1, equity_tp_s2, equity_tp_s3, equity_tp_s4,
-      max_positions_s1, max_positions_s2, max_positions_s3, max_positions_s4,
-      min_spacing_s1, min_spacing_s2, min_spacing_s3, min_spacing_s4,
-      trail_pips_s1, trail_pips_s2, trail_pips_s3, trail_pips_s4,
-      trendline_bars_s1, trendline_bars_s2, trendline_bars_s3, trendline_bars_s4,
-      angle_thresh_extra_s4_buy, angle_thresh_macro_s4_buy,
-      angle_thresh_micro_s4_buy, price_dist_extra_s4_buy
+   // Inizializzazione centralizzata dei parametri
+   paramsManager.Init(
+      StrategyInputParamsS1,
+      StrategyInputParamsS2,
+      StrategyInputParamsS3,
+      StrategyInputParamsS4
    );
 
-   // === [MAPPING] CONVERSIONE STRATEGY PARAMS ===
-   StrategyParams sp1 = strategyParams.GetS1();
-   StrategyParams sp2 = strategyParams.GetS2();
-   StrategyParams sp3 = strategyParams.GetS3();
-   StrategyParams sp4 = strategyParams.GetS4();
-
-   S1Params = ConvertToS1Params(sp1);
-   S2Params = ConvertToS2Params(sp2);
-   S3Params = ConvertToS3Params(sp3);
-   S4Params = ConvertToS4Params(sp4);
-
-   // === [A] AUDIT PRE-CHECK ===
-   AuditParamsCheck::RunAllAudits(
-   ConvertToS1Params(strategyParams.GetS1()),
-   ConvertToS2Params(strategyParams.GetS2()),
-   ConvertToS3Params(strategyParams.GetS3()),
-   ConvertToS4Params(strategyParams.GetS4()),
-   bypass_filter
-);
-
-   // === [V] CONFIGURAZIONE VOLUME DINAMICO ===
-   volumeManager.Configure(
-      inp_lot_strategy,
-      inp_base_volume,
-      inp_max_volume,
-      inp_initial_capital,
-      inp_increment_index,
-      inp_martingale_mult,
-      inp_sum_increment,
-      inp_use_volume_reset,
-      inp_reset_trigger_percent
-   );
-   volumeManager.SetDebugMode(true);
-
-   // === [E] CONFIG EXECUTOR ===
-   executor.Configure(magic_strategy_2, inp_label);
-   executor.volume = volumeManager;
-
-   // === [D] CONFIGURAZIONE DECISION MANAGER ===
-   decision.SetDeltaThresholds(delta_mm_s1, delta_me_s1, delta_em_s1);
-   decision.SetRetracementThresholds(angle_thresh_ext, angle_thresh_micmac, delta_min_retracement, max_dist_retracement);
-   decision.SetDebug(debug_strategy);
-
-   // === [S] CONFIG LABEL STRATEGIE ===
-   config_s1.sl_pips = sl_pips_s1;
-   config_s1.tp_pips = tp_pips_s1;
-   config_s1.magic = magic_strategy_1;
-   config_s1.label_prefix = "Strategy 1 - ";
-
-   config_s2.sl_pips = sl_pips_s2;
-   config_s2.tp_pips = tp_pips_s2;
-   config_s2.magic = magic_strategy_2;
-   config_s2.label_prefix = "Strategy 2 - ";
-
-   config_s3.sl_pips = sl_pips_s3;
-   config_s3.tp_pips = tp_pips_s3;
-   config_s3.magic = magic_strategy_3;
-   config_s3.label_prefix = "Strategy 3 - ";
-
-   // === [T] BLOCCO STRATEGY TESTER ===
-   if (MQLInfoInteger(MQL_TESTER) && !bypass_filter) {
-      Print("🚫 Audit disattivato in Strategy Tester (bypass_filter = false)");
-      return INIT_SUCCEEDED;
-   }
-
-   return INIT_SUCCEEDED;
+   Print("✅ Parametri strategici inizializzati correttamente.");
+   return(INIT_SUCCEEDED);
 }
 
-
+   Print("Inizializzazione completata con successo.");
+   return(INIT_SUCCEEDED);
+}
 
 
 
@@ -583,136 +557,53 @@ double CalculateTrendlineVelocity(string name) {
 
 void OnTick()
 {
-   static datetime last_exec = 0;
-   if (TimeCurrent() == last_exec) return;
-   last_exec = TimeCurrent();
+   // === PARAMETRI STRATEGICI CENTRALIZZATI ===
+   const StrategyInputParams &s1 = paramsManager.GetS1();
+   const StrategyInputParams &s2 = paramsManager.GetS2();
+   const StrategyInputParams &s3 = paramsManager.GetS3();
+   const StrategyInputParams &s4 = paramsManager.GetS4();
 
-   double lot = volume.CalculateLot();
-
-   if (!bypass_filter && !IsMarketFavorable()) return;
-
-   UpdateTrendline("Trendline0", micro_bars);
-   UpdateTrendline("Trendline1", macro_bars);
-   if (TimeCurrent() - last_extra_update >= extra_interval_sec) {
-      UpdateTrendline("Trendline2", extra_bars);
-      last_extra_update = TimeCurrent();
-   }
-
-   double a_micro = GetSlope("Trendline0");
-   double a_macro = GetSlope("Trendline1");
-   double a_extra = GetSlope("Trendline2");
-   double dist     = (iClose(_Symbol, _Period, 0) - ObjectGetDouble(0, "Trendline2", OBJPROP_PRICE, 1)) / _Point;
-
-   int up      = CountUP(count_window);
-   int down    = CountDOWN(count_window);
-   int support = CountSUPPORT(count_window);
-
-   double delta_mm = MathAbs(a_macro - a_micro);
-   double delta_me = MathAbs(a_macro - a_extra);
-   double delta_em = MathAbs(a_extra - a_micro);
-
-   decision.LoadData(a_micro, a_macro, a_extra, delta_mm, delta_me, delta_em, dist, up, down, support);
-
-   ApplyTrailingStop((int)inp_trail_pips);
-
-   // === TRACK COUNTER ===
-   string names[] = { "MICRO", "MACRO", "EXTRA" };
-   double angles[] = { a_micro, a_macro, a_extra };
-   double dirs[] = { CalculateTrendlineVelocity("Trendline0"),
-                     CalculateTrendlineVelocity("Trendline1"),
-                     CalculateTrendlineVelocity("Trendline2") };
-   double deltas[] = { a_micro - a_macro, a_macro - a_extra, a_extra - a_micro };
-   double volumes[] = { 1.9, 2.3, 2.7 }; // Placeholder
-   int bars[] = { TrendlineLengthBars("Trendline0"),
-                  TrendlineLengthBars("Trendline1"),
-                  TrendlineLengthBars("Trendline2") };
-
-   trackDrawer.ClearTrackCounter();
-   trackDrawer.Draw(names, angles, dirs, dirs, bars, deltas, volumes);
-
-   // === STRATEGIA 1 ===
-   if (s1.enabled && !executor.HasOpenTrade(s1.magic)) {
-      string dir = s1.invert ? "SELL" : "BUY";
-      string label = FormatStrategyLabel("S1", dir, s1.magic);
-      if (s1.use_buy && decision.CheckCompressionBUY()) {
-         Print("[INFO] Opening ", label);
-         if (dir == "BUY") executor.OpenBuy(lot, s1.sl_pips, s1.tp_pips, s1.magic, label);
-         else executor.OpenSell(lot, s1.sl_pips, s1.tp_pips, s1.magic, label);
-      }
-      if (s1.use_sell && decision.CheckCompressionSELL()) {
-         Print("[INFO] Opening ", label);
-         if (dir == "BUY") executor.OpenBuy(lot, s1.sl_pips, s1.tp_pips, s1.magic, label);
-         else executor.OpenSell(lot, s1.sl_pips, s1.tp_pips, s1.magic, label);
+   // === STRATEGIA 1: BUY Contrarian Cumulativo ===
+   if(s1.active && !executor.HasOpenTrade(s1.magic))
+   {
+      bool isBuy = true;
+      if(decision.CheckContrarianCumulative(
+            isBuy,
+            s1.angle_micro, s1.angle_macro, s1.angle_extra,
+            s1.vel, s1.dist,
+            s1.angle_macro_thresh,
+            s1.angle_extra_thresh,
+            s1.angle_micro_limit,
+            s1.vel_min, s1.dist_min))
+      {
+         double lot = trade_volume.CalculateLot();
+         executor.OpenBuy(lot, s1.sl_pips, s1.tp_pips, s1.magic, s1.label_prefix + "_BUY");
+         Print("✅ [S1] BUY APERTA - ", s1.label_prefix);
       }
    }
 
-   // === STRATEGIA 2 ===
-   if (s2.enabled && !executor.HasOpenTrade(s2.magic)) {
-      double v_micro = CalculateTrendlineVelocity("Trendline0");
-
-      bool buy = decision.CheckContrarianCumulative(true, a_micro, a_macro, a_extra, v_micro, dist,
-                  s2.angle_thresh_macro_buy, s2.angle_thresh_extra_buy, s2.angle_max_micro_buy,
-                  s2.velocity_min_micro_buy, s2.min_dist_extra_buy);
-
-      bool sell = decision.CheckContrarianCumulative(false, a_micro, a_macro, a_extra, v_micro, dist,
-                  s2.angle_thresh_macro, s2.angle_thresh_extra, s2.angle_min_micro,
-                  s2.velocity_min_micro, s2.min_dist_extra);
-
-      string dir = s2.invert ? "SELL" : "BUY";
-      string label = FormatStrategyLabel("S2", dir, s2.magic);
-
-      if (s2.use_buy && buy) {
-         Print("[INFO] Opening ", label);
-         if (dir == "BUY") executor.OpenBuy(lot, s2.sl_pips, s2.tp_pips, s2.magic, label);
-         else executor.OpenSell(lot, s2.sl_pips, s2.tp_pips, s2.magic, label);
-      }
-
-      if (s2.use_sell && sell) {
-         Print("[INFO] Opening ", label);
-         if (dir == "BUY") executor.OpenBuy(lot, s2.sl_pips, s2.tp_pips, s2.magic, label);
-         else executor.OpenSell(lot, s2.sl_pips, s2.tp_pips, s2.magic, label);
+   // === STRATEGIA 2: SELL Contrarian Cumulativo ===
+   if(s2.active && !executor.HasOpenTrade(s2.magic))
+   {
+      bool isBuy = false;
+      if(decision.CheckContrarianCumulative(
+            isBuy,
+            s2.angle_micro, s2.angle_macro, s2.angle_extra,
+            s2.vel, s2.dist,
+            s2.angle_macro_thresh,
+            s2.angle_extra_thresh,
+            s2.angle_micro_limit,
+            s2.vel_min, s2.dist_min))
+      {
+         double lot = trade_volume.CalculateLot();
+         executor.OpenSell(lot, s2.sl_pips, s2.tp_pips, s2.magic, s2.label_prefix + "_SELL");
+         Print("✅ [S2] SELL APERTA - ", s2.label_prefix);
       }
    }
 
-   // === STRATEGIA 3 ===
-   if (s3.enabled && !executor.HasOpenTrade(s3.magic)) {
-      string dir = s3.invert ? "SELL" : "BUY";
-      string label = FormatStrategyLabel("S3", dir, s3.magic);
-
-      if (s3.use_buy && decision.CheckRetracementBUY()) {
-         Print("[INFO] Opening ", label);
-         if (dir == "BUY") executor.OpenBuy(lot, s3.sl_pips, s3.tp_pips, s3.magic, label);
-         else executor.OpenSell(lot, s3.sl_pips, s3.tp_pips, s3.magic, label);
-      }
-
-      if (s3.use_sell && decision.CheckRetracementSELL()) {
-         Print("[INFO] Opening ", label);
-         if (dir == "BUY") executor.OpenBuy(lot, s3.sl_pips, s3.tp_pips, s3.magic, label);
-         else executor.OpenSell(lot, s3.sl_pips, s3.tp_pips, s3.magic, label);
-      }
-   }
-
-   // === STRATEGIA 4 ===
-   if (s4.enabled && !executor.HasOpenTrade(s4.magic)) {
-      string dir = s4.invert ? "SELL" : "BUY";
-      string label = FormatStrategyLabel("S4", dir, s4.magic);
-
-      if (s4.use_buy && decision.CheckContrarianAuto(true,
-         s4.angle_thresh_extra, s4.angle_thresh_macro, s4.angle_min_micro,
-         s4.velocity_min_micro, s4.min_dist_extra)) {
-         Print("[INFO] Opening ", label);
-         if (dir == "BUY") executor.OpenBuy(lot, s4.sl_pips, s4.tp_pips, s4.magic, label);
-         else executor.OpenSell(lot, s4.sl_pips, s4.tp_pips, s4.magic, label);
-      }
-
-      if (s4.use_sell && decision.CheckContrarianAuto(false,
-         s4.angle_thresh_extra, s4.angle_thresh_macro, s4.angle_min_micro,
-         s4.velocity_min_micro, s4.min_dist_extra)) {
-         Print("[INFO] Opening ", label);
-         if (dir == "BUY") executor.OpenBuy(lot, s4.sl_pips, s4.tp_pips, s4.magic, label);
-         else executor.OpenSell(lot, s4.sl_pips, s4.tp_pips, s4.magic, label);
-      }
-   }
+   // === STRATEGIE FUTURE ===
+   // if(s3.active) { ... }
+   // if(s4.active) { ... }
 }
 
 
@@ -991,5 +882,3 @@ ObjectSetString(0, "LabelLeft5", OBJPROP_TEXT, lengths);
    AuditCheck::CheckTrailingLogic(profit_points, momentum, inp_profit_trigger_points, inp_momentum_base);
 }
 }
-
-
