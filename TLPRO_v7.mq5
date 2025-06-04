@@ -22,7 +22,7 @@
 #include "../Include/CTrackCounterDashboard.mqh"
 #include "../Include/CTrendlineAnalyzer.mqh"
 #include "../Include/MovingAverages.mqh"
-#include "../Include/ParamConverters.mqh"
+// #include "../Include/ParamConverters.mqh"
 #include "../Include/AuditParamsCheck.mqh"
 #include "../Include/AuditCheck.mqh"
 
