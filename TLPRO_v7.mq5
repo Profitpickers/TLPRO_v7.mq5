@@ -440,21 +440,11 @@ input string inp_label = "TrendlinePRO";       // Prefisso comune per etichette 
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   // Inizializzazione centralizzata dei parametri
-   paramsManager.Init(
-      StrategyInputParamsS1,
-      StrategyInputParamsS2,
-      StrategyInputParamsS3,
-      StrategyInputParamsS4
-   );
-
-   Print("✅ Parametri strategici inizializzati correttamente.");
-   return(INIT_SUCCEEDED);
+   paramsManager.InitFromInputs();
+   Print("✅ Inizializzazione completata con successo.");
+   return INIT_SUCCEEDED;
 }
 
-   Print("Inizializzazione completata con successo.");
-   return(INIT_SUCCEEDED);
-}
 
 
 
