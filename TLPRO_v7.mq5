@@ -13,20 +13,23 @@
 
 
 #include <ChartObjects/ChartObjectsLines.mqh>
-
 #include <Trade/Trade.mqh>
+
+#include "../Include/CTrendlineAnalyzer.mqh"
+#include "../Include/MovingAverages.mqh"
+
+
 #include "../Include/CStrategyParamsManager.mqh"
+#include "../Include/AuditParamsCheck.mqh"
+
 #include "../Include/CTradeExecutor.mqh"
 #include "../Include/CTradeDecisionManager.mqh"
 #include "../Include/CVolumeManager.mqh"
-#include "../Include/CTrackCounterDashboard.mqh"
-#include "../Include/CTrendlineAnalyzer.mqh"
-#include "../Include/MovingAverages.mqh"
-// #include "../Include/ParamConverters.mqh"
-#include "../Include/AuditParamsCheck.mqh"
-#include "../Include/AuditCheck.mqh"
 
+#include "../Include/CTrackCounterDashboard.mqh"
 #include "../Include/CTrackCounterDrawer.mqh"
+
+#include "../Include/AuditCheck.mqh"
 #include "../Include/CAuditCheck.mqh"
 
 
