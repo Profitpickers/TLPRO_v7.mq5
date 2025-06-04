@@ -51,10 +51,7 @@ double indexMicro, indexMacro, indexExtra;
 CTrade trade;
 
 
-StrategyParams paramsS1;
-StrategyParams paramsS2;
-StrategyParams paramsS3;
-StrategyParams paramsS4;
+
 
 CVolumeManager        trade_volume;
 CVolumeManager volumeManager;
@@ -551,17 +548,16 @@ double CalculateTrendlineVelocity(string name) {
 void OnTick()
 {
    // === PARAMETRI STRATEGICI CENTRALIZZATI ===
-   const StrategyInputParams &s1 = paramsManager.GetS1();
-   const StrategyInputParams &s2 = paramsManager.GetS2();
-   const StrategyInputParams &s3 = paramsManager.GetS3();
-   const StrategyInputParams &s4 = paramsManager.GetS4();
+     StrategyInputParams s1 = paramsManager.GetS1();
+     StrategyInputParams s2 = paramsManager.GetS2();
+     StrategyInputParams s3 = paramsManager.GetS3();
+     StrategyInputParams s4 = paramsManager.GetS4();
 
-   // === STRATEGIA 1: BUY Contrarian Cumulativo ===
+   // === STRATEGIA 1: BUY Contrarian ===
    if(s1.active && !executor.HasOpenTrade(s1.magic))
    {
       bool isBuy = true;
-      if(decision.CheckContrarianCumulative(
-            isBuy,
+      if(decision.CheckContrarianCumulative(isBuy,
             s1.angle_micro, s1.angle_macro, s1.angle_extra,
             s1.vel, s1.dist,
             s1.angle_macro_thresh,
@@ -575,12 +571,11 @@ void OnTick()
       }
    }
 
-   // === STRATEGIA 2: SELL Contrarian Cumulativo ===
+   // === STRATEGIA 2: SELL se S1 era attiva ===
    if(s2.active && !executor.HasOpenTrade(s2.magic))
    {
       bool isBuy = false;
-      if(decision.CheckContrarianCumulative(
-            isBuy,
+      if(decision.CheckContrarianCumulative(isBuy,
             s2.angle_micro, s2.angle_macro, s2.angle_extra,
             s2.vel, s2.dist,
             s2.angle_macro_thresh,
@@ -588,15 +583,49 @@ void OnTick()
             s2.angle_micro_limit,
             s2.vel_min, s2.dist_min))
       {
+         // executor.CloseAllByMagic(s1.magic); // Chiudi S1
          double lot = trade_volume.CalculateLot();
          executor.OpenSell(lot, s2.sl_pips, s2.tp_pips, s2.magic, s2.label_prefix + "_SELL");
-         Print("✅ [S2] SELL APERTA - ", s2.label_prefix);
+         Print("✅ [S2] SELL APERTA (chiusa S1) - ", s2.label_prefix);
       }
    }
 
-   // === STRATEGIE FUTURE ===
-   // if(s3.active) { ... }
-   // if(s4.active) { ... }
+   // === STRATEGIA 3: SELL Contrarian ===
+   if(s3.active && !executor.HasOpenTrade(s3.magic))
+   {
+      bool isBuy = false;
+      if(decision.CheckContrarianCumulative(isBuy,
+            s3.angle_micro, s3.angle_macro, s3.angle_extra,
+            s3.vel, s3.dist,
+            s3.angle_macro_thresh,
+            s3.angle_extra_thresh,
+            s3.angle_micro_limit,
+            s3.vel_min, s3.dist_min))
+      {
+         double lot = trade_volume.CalculateLot();
+         executor.OpenSell(lot, s3.sl_pips, s3.tp_pips, s3.magic, s3.label_prefix + "_SELL");
+         Print("✅ [S3] SELL APERTA - ", s3.label_prefix);
+      }
+   }
+
+   // === STRATEGIA 4: BUY se S3 era attiva ===
+   if(s4.active && !executor.HasOpenTrade(s4.magic))
+   {
+      bool isBuy = true;
+      if(decision.CheckContrarianCumulative(isBuy,
+            s4.angle_micro, s4.angle_macro, s4.angle_extra,
+            s4.vel, s4.dist,
+            s4.angle_macro_thresh,
+            s4.angle_extra_thresh,
+            s4.angle_micro_limit,
+            s4.vel_min, s4.dist_min))
+      {
+         // executor.CloseAllByMagic(s3.magic); // Chiudi S3
+         double lot = trade_volume.CalculateLot();
+         executor.OpenBuy(lot, s4.sl_pips, s4.tp_pips, s4.magic, s4.label_prefix + "_BUY");
+         Print("✅ [S4] BUY APERTA (chiusa S3) - ", s4.label_prefix);
+      }
+   }
 }
 
 
